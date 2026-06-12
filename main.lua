@@ -9,6 +9,8 @@ local R    = require("src.render")
 local V    = require("src.viewport")
 local SND  = require("src.sound")
 local Anim = require("src.anim")
+local Atmosphere = require("src.atmosphere")
+local Smoke = require("src.smoke")
 
 -- ── Global state ───────────────────────────────────────────────────────────
 
@@ -126,6 +128,8 @@ end
 function love.update(dt)
     V.update()        -- cheap; safe to refresh every frame
     
+    Smoke.update(dt)  -- Update procedural smoke particles
+
     if game.state == C.STATE_RESULT and game.autoSouth then
         -- Handle result auto-advance for CPU testing
         local linger = game.humanWon and 8.0 or 4.0
@@ -170,6 +174,12 @@ end
 
 function love.draw()
     V.drawBegin()
+
+    -- Apply Time of Day atmosphere (Warmth/Night feeling)
+    Atmosphere.applyMood()
+
+    -- Draw ambient smoke particles
+    Smoke.draw()
 
     local mx, my = V.mouseVirtual()
 

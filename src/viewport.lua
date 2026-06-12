@@ -12,20 +12,37 @@ local C = require("src.constants")
 
 local V = {}
 
+-- Base virtual canvas (safe content area — all game elements fit here)
 V.W       = C.SW       -- virtual width  (1280)
 V.H       = C.SH       -- virtual height (800)
 V.scale   = 1
 V.offsetX = 0
 V.offsetY = 0
 
+-- Full virtual screen extents — always fills the physical window.
+-- Use these for backgrounds so no black bars appear around the felt.
+V.VX = 0      -- virtual x of window top-left  (0 or negative)
+V.VY = 0      -- virtual y of window top-left  (0 or negative)
+V.VW = C.SW   -- virtual width  of window  (>= V.W)
+V.VH = C.SH   -- virtual height of window  (>= V.H)
+
 function V.update()
     local winW, winH = love.graphics.getDimensions()
-    -- letterbox: pick the smaller scale so both axes fit
     local sx = winW / V.W
     local sy = winH / V.H
-    V.scale   = math.min(sx, sy)
+
+    -- Use the SMALLER scale so the full safe area (1280×800) is always visible.
+    -- backgrounds are drawn to V.VX/VY/VW/VH so the felt fills the screen.
+    V.scale = math.min(sx, sy)
+
     V.offsetX = (winW - V.W * V.scale) / 2
     V.offsetY = (winH - V.H * V.scale) / 2
+
+    -- Full-screen virtual extents (may extend beyond the 1280×800 safe area)
+    V.VX = -V.offsetX / V.scale
+    V.VY = -V.offsetY / V.scale
+    V.VW =  winW / V.scale
+    V.VH =  winH / V.scale
 end
 
 -- Begin drawing transform: call once at the top of love.draw, before
@@ -38,17 +55,7 @@ end
 
 function V.drawEnd()
     love.graphics.pop()
-    -- Letterbox bars (kept subtle so the felt is the focus)
-    local winW, winH = love.graphics.getDimensions()
-    love.graphics.setColor(0, 0, 0, 1)
-    if V.offsetX > 0 then
-        love.graphics.rectangle("fill", 0, 0, V.offsetX, winH)
-        love.graphics.rectangle("fill", winW - V.offsetX, 0, V.offsetX, winH)
-    end
-    if V.offsetY > 0 then
-        love.graphics.rectangle("fill", 0, 0, winW, V.offsetY)
-        love.graphics.rectangle("fill", 0, winH - V.offsetY, winW, V.offsetY)
-    end
+    -- No letterbox bars needed: render code fills backgrounds to V.VX/VY/VW/VH.
 end
 
 -- Convert a window coordinate (from love.mouse*) into virtual space.

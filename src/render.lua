@@ -1,6 +1,7 @@
 -- All rendering for the Bridge game
 
 local C    = require("src.constants")
+local V    = require("src.viewport")
 local AI   = require("src.ai")
 
 local R = {}
@@ -53,19 +54,6 @@ local CONFETTI_COLORS = {
 -- Track the previous game state so we can fire confetti on entering RESULT
 local prevState = nil
 
--- ── Hover-animation state (forward declarations so R.update can prune) ─────
--- The actual button() implementation that mutates these lives further down.
-local hoverProgress = {}      -- [key] = 0..1
-local hoverSeen     = {}      -- [key] = true (this frame)
-local HOVER_SPEED   = 12      -- per-second easing rate (≈ 80 ms to settle)
-
-local function pruneHoverState()
-    for k in pairs(hoverProgress) do
-        if not hoverSeen[k] then hoverProgress[k] = nil end
-    end
-    hoverSeen = {}
-end
-
 function R.load()
     fonts.tiny   = love.graphics.newFont(11)
     fonts.small  = love.graphics.newFont(13)
@@ -106,6 +94,9 @@ function R.load()
     loadBacksFrom("assets/card_backs_thematic")
     R.BACK_COUNT = #cardBacks
     currentBack  = cardBacks[1]
+
+    -- Safety net: any pixels not covered by a background draw show felt, not black.
+    love.graphics.setBackgroundColor(PAL.felt)
 end
 
 function R.setBackTheme(idx)
@@ -121,9 +112,6 @@ local function spawnConfettiBurst()
 end
 
 function R.update(dt)
-    -- Discard stale per-button hover progress every frame (cheap, ~tens of keys)
-    pruneHoverState()
-
     if not confetti.active then return end
     if confetti.spawnFor > 0 then
         confetti.spawnFor = confetti.spawnFor - dt
@@ -215,91 +203,12 @@ local function centredText(font, text, cx, cy, maxWidth)
     end
 end
 
--- ── Modern hover-animated buttons ──────────────────────────────────────────
---
--- Per-button hover progress (0..1) eases towards the hover target every frame
--- and drives lift / scale / colour / glow / shadow. Signature is unchanged so
--- every existing caller keeps working — buttons just look more alive.
-
-local function btnKey(label, x, y)
-    return label .. "@" .. math.floor(x) .. "," .. math.floor(y)
-end
-
-local function easeOutCubic(t)
-    local u = 1 - t
-    return 1 - u * u * u
-end
-
-local function lerp(a, b, t) return a + (b - a) * t end
-
-local function lerpColor(c1, c2, t)
-    return {
-        lerp(c1[1], c2[1], t),
-        lerp(c1[2], c2[2], t),
-        lerp(c1[3], c2[3], t),
-        lerp(c1[4] or 1, c2[4] or 1, t),
-    }
-end
-
 local function button(label, x, y, w, h, mx, my, col, hcol)
     local hov = mx >= x and mx <= x+w and my >= y and my <= y+h
-
-    -- Advance the per-button hover progress towards its target.
-    local key = btnKey(label, x, y)
-    hoverSeen[key] = true
-    local prev   = hoverProgress[key] or 0
-    local target = hov and 1 or 0
-    local dt     = love.timer.getDelta() or 0
-    local k      = math.min(1, dt * HOVER_SPEED)
-    local raw    = prev + (target - prev) * k
-    hoverProgress[key] = raw
-    local p = easeOutCubic(raw)        -- 0..1, eased
-
-    -- Derived visual params --------------------------------------------------
-    local lift    = -3 * p                    -- pixels (negative = up)
-    local scale   = 1 + 0.035 * p             -- 1.0 → 1.035
-    local cx, cy  = x + w/2, y + h/2
-    local fillCol = lerpColor(col, hcol, p)
-    -- Brighten fill a touch more at full hover for extra "pop"
-    fillCol[1] = math.min(1, fillCol[1] + 0.04 * p)
-    fillCol[2] = math.min(1, fillCol[2] + 0.04 * p)
-    fillCol[3] = math.min(1, fillCol[3] + 0.04 * p)
-
-    -- Drop shadow (deeper when hovered → button feels lifted) ----------------
-    setColor(0, 0, 0, 0.28 + 0.18 * p)
-    local shY = 3 + 4 * p
-    love.graphics.rectangle("fill", x + 1, y + shY, w, h, 7)
-
-    -- Body — scaled around centre so the layout / hit-box stays exact -------
-    love.graphics.push()
-    love.graphics.translate(cx, cy + lift)
-    love.graphics.scale(scale, scale)
-    love.graphics.translate(-cx, -cy)
-
-    setColor(fillCol)
+    setColor(hov and hcol or col)
     love.graphics.rectangle("fill", x, y, w, h, 7)
-
-    -- Inner top highlight (subtle sheen) ------------------------------------
-    setColor(1, 1, 1, 0.10 + 0.08 * p)
-    love.graphics.rectangle("fill", x + 2, y + 2, w - 4, math.max(2, h * 0.38), 6)
-
-    -- Animated glow outline (only visible while hovering) -------------------
-    if p > 0.01 then
-        love.graphics.setLineWidth(2)
-        setColor(hcol[1], hcol[2], hcol[3], 0.65 * p)
-        love.graphics.rectangle("line", x - 1, y - 1, w + 2, h + 2, 8)
-        setColor(hcol[1], hcol[2], hcol[3], 0.22 * p)
-        love.graphics.rectangle("line", x - 3, y - 3, w + 6, h + 6, 10)
-        love.graphics.setLineWidth(1)
-    end
-
-    -- Label (slight brightness boost on hover) ------------------------------
-    setColor(1, 1, 1, math.min(1, 0.92 + 0.08 * p))
-    centredText(fonts.med, label, cx, cy)
-
-    love.graphics.pop()
-    setColor(1, 1, 1, 1)
-
+    setColor(PAL.white)
+    centredText(fonts.med, label, x+w/2, y+h/2)
     return hov, x, y, w, h
 end
 
@@ -753,7 +662,7 @@ end
 function R.drawDealing(game)
     local Anim = require("src.anim")
     setColor(PAL.felt)
-    love.graphics.rectangle("fill", 0, 0, C.SW, C.SH)
+    love.graphics.rectangle("fill", V.VX, V.VY, V.VW, V.VH)
     setColor(PAL.felt_inner)
     love.graphics.ellipse("fill", C.SW/2, C.SH/2, C.SW*0.40, C.SH*0.45)
 
@@ -1049,7 +958,7 @@ end
 function R.drawAuction(game, mx, my, selectedBid)
     -- Felt + table oval
     setColor(PAL.felt)
-    love.graphics.rectangle("fill", 0, 0, C.SW, C.SH)
+    love.graphics.rectangle("fill", V.VX, V.VY, V.VW, V.VH)
     setColor(PAL.felt_inner)
     love.graphics.ellipse("fill", C.SW/2, C.SH/2, C.SW*0.40, C.SH*0.45)
 
@@ -1169,7 +1078,7 @@ R.drawAnnouncement = nil
 function R.drawGame(game, southSel, southHov, northSel, northHov)
     -- Background
     setColor(PAL.felt)
-    love.graphics.rectangle("fill", 0, 0, C.SW, C.SH)
+    love.graphics.rectangle("fill", V.VX, V.VY, V.VW, V.VH)
     setColor(PAL.felt_inner)
     love.graphics.ellipse("fill", C.SW/2, C.SH/2, 430, 310)
 
@@ -1254,7 +1163,7 @@ end
 function R.drawBidding(game, selSuit, selTricks, mx, my)
     -- Table background (with hands visible)
     setColor(PAL.felt)
-    love.graphics.rectangle("fill", 0, 0, C.SW, C.SH)
+    love.graphics.rectangle("fill", V.VX, V.VY, V.VW, V.VH)
     setColor(PAL.felt_inner)
     love.graphics.ellipse("fill", C.SW/2, C.SH/2, 430, 310)
 
@@ -1377,7 +1286,7 @@ function R.drawResult(game, setupState, mx, my)
         R.drawGame(game, nil, nil, nil, nil)
         
         setColor(0, 0, 0, 0.65)
-        love.graphics.rectangle("fill", 0, 0, C.SW, C.SH)
+        love.graphics.rectangle("fill", V.VX, V.VY, V.VW, V.VH)
         
         local bw, bh = 700, 420
         local bx, by = C.SW/2 - bw/2, C.SH/2 - bh/2
@@ -1440,7 +1349,7 @@ function R.drawResult(game, setupState, mx, my)
     end
 
     setColor(PAL.felt)
-    love.graphics.rectangle("fill", 0, 0, C.SW, C.SH)
+    love.graphics.rectangle("fill", V.VX, V.VY, V.VW, V.VH)
     setColor(PAL.felt_inner)
     love.graphics.ellipse("fill", C.SW/2, C.SH/2, C.SW*0.42, C.SH*0.48)
 
@@ -1585,7 +1494,7 @@ end
 -- ── Main menu ──────────────────────────────────────────────────────────────
 function R.drawMainMenu(mx, my)
     setColor(PAL.felt)
-    love.graphics.rectangle("fill", 0, 0, C.SW, C.SH)
+    love.graphics.rectangle("fill", V.VX, V.VY, V.VW, V.VH)
     setColor(PAL.felt_inner)
     love.graphics.ellipse("fill", C.SW/2, C.SH/2, 560, 380)
 
@@ -1624,7 +1533,7 @@ end
 -- ── New-game setup screen (seed input + AI difficulty) ─────────────────────
 function R.drawNewGameSetup(setupState, mx, my)
     setColor(PAL.felt)
-    love.graphics.rectangle("fill", 0, 0, C.SW, C.SH)
+    love.graphics.rectangle("fill", V.VX, V.VY, V.VW, V.VH)
     setColor(PAL.felt_inner)
     love.graphics.ellipse("fill", C.SW/2, C.SH/2, 560, 380)
 
@@ -1779,7 +1688,7 @@ end
 -- ── Match Summary Screen ───────────────────────────────────────────────────
 function R.drawMatchSummary(game, mx, my)
     setColor(PAL.felt)
-    love.graphics.rectangle("fill", 0, 0, C.SW, C.SH)
+    love.graphics.rectangle("fill", V.VX, V.VY, V.VW, V.VH)
     setColor(PAL.felt_inner)
     love.graphics.ellipse("fill", C.SW/2, C.SH/2, C.SW*0.42, C.SH*0.48)
 
